@@ -1,0 +1,872 @@
+openapi: 3.0.3
+info:
+  title: ClinicQ - Digital Queue Management System API
+  description: |
+    REST API for managing patient queues, appointments, and real-time clinic operations.
+    
+    ## Features
+    - Patient appointment booking and queue tracking
+    - Doctor queue management and patient flow control
+    - Emergency request handling with fraud detection
+    - Real-time WebSocket updates for queue positions
+    - Rating and feedback system
+    
+    ## Authentication
+    All endpoints (except /auth/register and /auth/login) require JWT Bearer token authentication.
+    Include the token in the Authorization header: `Authorization: Bearer <token>`
+  version: 1.0.0
+  contact:
+    name: ClinicQ API Support
+    email: support@clinicq.com
+
+servers:
+  - url: http://localhost:8000/api
+    description: Local development server
+  - url: https://api.clinicq.com/api
+    description: Production server
+
+tags:
+  - name: Authentication
+    description: User registration, login, and token management
+  - name: Clinics
+    description: Clinic discovery and information
+  - name: Appointments
+    description: Patient appointment booking and management
+  - name: Queue
+    description: Real-time queue tracking and position updates
+  - name: Emergency
+    description: Emergency request handling
+  - name: Doctor
+    description: Doctor dashboard and queue management
+  - name: Ratings
+    description: Clinic ratings and feedback
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    User:
+      type: object
+      properties:
+        id:
+          type: integer
+        phone:
+          type: string
+          pattern: '^\d{10}$'
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        age:
+          type: integer
+          minimum: 1
+          maximum: 120
+        gender:
+          type: string
+          enum: [Male, Female, Other]
+        role:
+          type: string
+          enum: [patient, doctor, admin]
+
+    Clinic:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        locality:
+          type: string
+        address:
+          type: string
+        phone:
+          type: string
+        rating_avg:
+          type: number
+          format: float
+        total_ratings:
+          type: integer
+        current_wait_time:
+          type: integer
+          description: Current wait time in minutes
+        patients_in_queue:
+          type: integer
+
+    Appointment:
+      type: object
+      properties:
+        id:
+          type: integer
+        patient_id:
+          type: integer
+        doctor_clinic_id:
+          type: integer
+        queue_position:
+          type: integer
+        status:
+          type: string
+          enum: [booked, waiting, in_progress, completed, cancelled, no_show]
+        is_emergency:
+          type: boolean
+        emergency_reason:
+          type: string
+        booked_at:
+          type: string
+          format: date-time
+        arrived_at:
+          type: string
+          format: date-time
+        visited_at:
+          type: string
+          format: date-time
+        estimated_time:
+          type: string
+          format: date-time
+
+    QueuePosition:
+      type: object
+      properties:
+        appointment_id:
+          type: integer
+        patient_name:
+          type: string
+        position:
+          oneOf:
+            - type: integer
+            - type: string
+              pattern: '^E\d+$'
+        status:
+          type: string
+        estimated_wait_minutes:
+          type: integer
+        estimated_turn:
+          type: string
+        patients_ahead:
+          type: integer
+
+    Error:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: string
+        details:
+          type: string
+
+paths:
+  # ========== AUTHENTICATION ==========
+  /auth/register:
+    post:
+      tags:
+        - Authentication
+      summary: Register new user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - phone
+                - name
+                - age
+                - gender
+                - password
+                - role
+              properties:
+                phone:
+                  type: string
+                  pattern: '^\d{10}$'
+                name:
+                  type: string
+                email:
+                  type: string
+                  format: email
+                age:
+                  type: integer
+                gender:
+                  type: string
+                  enum: [Male, Female, Other]
+                password:
+                  type: string
+                  minLength: 6
+                role:
+                  type: string
+                  enum: [patient, doctor]
+      responses:
+        '201':
+          description: User registered successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  user:
+                    $ref: '#/components/schemas/User'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /auth/login:
+    post:
+      tags:
+        - Authentication
+      summary: Login user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - phone
+                - password
+              properties:
+                phone:
+                  type: string
+                password:
+                  type: string
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  access_token:
+                    type: string
+                  refresh_token:
+                    type: string
+                  user:
+                    $ref: '#/components/schemas/User'
+        '401':
+          description: Invalid credentials
+
+  /auth/send-otp:
+    post:
+      tags:
+        - Authentication
+      summary: Send OTP for phone verification
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                phone:
+                  type: string
+      responses:
+        '200':
+          description: OTP sent successfully
+
+  /auth/verify-otp:
+    post:
+      tags:
+        - Authentication
+      summary: Verify OTP
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                phone:
+                  type: string
+                otp:
+                  type: string
+      responses:
+        '200':
+          description: OTP verified
+
+  /auth/refresh-token:
+    post:
+      tags:
+        - Authentication
+      summary: Refresh access token
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                refresh_token:
+                  type: string
+      responses:
+        '200':
+          description: Token refreshed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token:
+                    type: string
+
+  # ========== CLINICS ==========
+  /clinics:
+    get:
+      tags:
+        - Clinics
+      summary: List all clinics with filters
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: locality
+          in: query
+          schema:
+            type: string
+        - name: specialization
+          in: query
+          schema:
+            type: string
+        - name: max_wait_time
+          in: query
+          schema:
+            type: integer
+        - name: min_rating
+          in: query
+          schema:
+            type: number
+      responses:
+        '200':
+          description: List of clinics
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Clinic'
+
+  /clinics/{id}:
+    get:
+      tags:
+        - Clinics
+      summary: Get clinic details
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Clinic details
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    $ref: '#/components/schemas/Clinic'
+
+  # ========== APPOINTMENTS ==========
+  /appointments:
+    post:
+      tags:
+        - Appointments
+      summary: Book appointment
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - doctor_clinic_id
+              properties:
+                doctor_clinic_id:
+                  type: integer
+                preferred_time:
+                  type: string
+                  format: date-time
+      responses:
+        '201':
+          description: Appointment booked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      appointment_id:
+                        type: integer
+                      queue_position:
+                        type: integer
+                      estimated_wait:
+                        type: integer
+                      estimated_turn:
+                        type: string
+                      doctor:
+                        type: object
+                      clinic:
+                        type: object
+
+  /appointments/my:
+    get:
+      tags:
+        - Appointments
+      summary: Get my appointments
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [booked, waiting, completed, cancelled]
+      responses:
+        '200':
+          description: List of appointments
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Appointment'
+
+  /appointments/{id}:
+    get:
+      tags:
+        - Appointments
+      summary: Get appointment details
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Appointment details
+    
+    delete:
+      tags:
+        - Appointments
+      summary: Cancel appointment
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Appointment cancelled
+
+  /appointments/{id}/arrive:
+    put:
+      tags:
+        - Appointments
+      summary: Mark "I've arrived at clinic"
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Arrival confirmed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+
+  # ========== QUEUE ==========
+  /queue/{doctor_clinic_id}:
+    get:
+      tags:
+        - Queue
+      summary: Get current queue state
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: doctor_clinic_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Queue state
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      doctor_clinic_id:
+                        type: integer
+                      queue_status:
+                        type: string
+                        enum: [open, paused, closed]
+                      total_patients:
+                        type: integer
+                      emergency_queue:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/QueuePosition'
+                      regular_queue:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/QueuePosition'
+                      avg_wait_time:
+                        type: integer
+                      last_updated:
+                        type: string
+                        format: date-time
+
+  /queue/my-position/{appointment_id}:
+    get:
+      tags:
+        - Queue
+      summary: Get my queue position
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: appointment_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Queue position details
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    $ref: '#/components/schemas/QueuePosition'
+
+  # ========== EMERGENCY ==========
+  /emergency:
+    post:
+      tags:
+        - Emergency
+      summary: Request emergency priority
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - appointment_id
+                - reason
+              properties:
+                appointment_id:
+                  type: integer
+                reason:
+                  type: string
+                  enum:
+                    - Chest pain / Heart issue
+                    - High fever (>103°F)
+                    - Severe injury / Bleeding
+                    - Breathing difficulty
+                    - Severe abdominal pain
+                    - Other
+                description:
+                  type: string
+      responses:
+        '201':
+          description: Emergency request submitted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  emergency_id:
+                    type: integer
+
+  /emergency/status/{id}:
+    get:
+      tags:
+        - Emergency
+      summary: Check emergency request status
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Emergency status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      status:
+                        type: string
+                        enum: [pending, approved, rejected]
+                      reason:
+                        type: string
+                      submitted_at:
+                        type: string
+
+  # ========== DOCTOR ENDPOINTS ==========
+  /doctor/queue:
+    get:
+      tags:
+        - Doctor
+      summary: Get today's queue
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Doctor's queue
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+
+  /doctor/queue/status:
+    put:
+      tags:
+        - Doctor
+      summary: Update queue status (open/paused/closed)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status:
+                  type: string
+                  enum: [open, paused, closed]
+      responses:
+        '200':
+          description: Queue status updated
+
+  /doctor/consultation-time:
+    put:
+      tags:
+        - Doctor
+      summary: Set average consultation time
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                consultation_time:
+                  type: integer
+                  description: Average consultation time in minutes
+      responses:
+        '200':
+          description: Consultation time updated
+
+  /doctor/appointments/{id}/visit:
+    put:
+      tags:
+        - Doctor
+      summary: Mark patient as visited
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Patient marked as visited
+
+  /doctor/appointments/{id}/no-show:
+    put:
+      tags:
+        - Doctor
+      summary: Report patient no-show
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: No-show reported
+
+  /doctor/emergencies:
+    get:
+      tags:
+        - Doctor
+      summary: Get pending emergency requests
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: List of emergency requests
+
+  /doctor/emergencies/{id}/approve:
+    put:
+      tags:
+        - Doctor
+      summary: Approve emergency request
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Emergency approved
+
+  /doctor/emergencies/{id}/reject:
+    put:
+      tags:
+        - Doctor
+      summary: Reject emergency request
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Emergency rejected
+
+  /doctor/emergencies/{id}/report:
+    put:
+      tags:
+        - Doctor
+      summary: Report fake emergency
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Fake emergency reported
+
+  # ========== RATINGS ==========
+  /ratings:
+    post:
+      tags:
+        - Ratings
+      summary: Submit clinic rating
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - appointment_id
+                - stars
+              properties:
+                appointment_id:
+                  type: integer
+                stars:
+                  type: integer
+                  minimum: 1
+                  maximum: 5
+                wait_time_rating:
+                  type: string
+                  enum: [very_good, good, average, poor]
+                comment:
+                  type: string
+      responses:
+        '201':
+          description: Rating submitted
