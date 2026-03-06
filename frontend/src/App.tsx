@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
 import './index.css'
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api'
+const BASE_API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api'
+const API_URL = BASE_API_URL.endsWith('/') ? BASE_API_URL.slice(0, -1) : BASE_API_URL
 
 // Health motivational quotes that rotate every 5 seconds
 const healthQuotes = [
