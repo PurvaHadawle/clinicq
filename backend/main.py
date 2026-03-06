@@ -577,9 +577,11 @@ def root():
 # Authentication
 @app.post("/api/auth/register")
 def register(user: UserRegister):
+    print(f"DEBUG: Registering user with email: {user.email}")
     # Check if email exists
     for u in users_db.values():
-        if u.get("email") == user.email:
+        if u.get("email", "").lower() == user.email.lower():
+            print(f"DEBUG: Registration failed - Email {user.email} already exists")
             raise HTTPException(status_code=400, detail="Email already registered")
     
     user_id = len(users_db) + 1
@@ -588,6 +590,7 @@ def register(user: UserRegister):
         **user.model_dump()
     }
     users_db[user_id] = new_user
+    print(f"DEBUG: User registered successfully: {user.email} (ID: {user_id})")
     
     return {
         "success": True,
@@ -597,14 +600,20 @@ def register(user: UserRegister):
 
 @app.post("/api/auth/login")
 def login(credentials: UserLogin):
+    print(f"DEBUG: Login attempt for email: {credentials.email}")
     for user in users_db.values():
-        if user.get("email", "").lower() == credentials.email.lower() and user["password"] == credentials.password:
-            return {
-                "success": True,
-                "access_token": f"mock_token_{user['id']}",
-                "user": {k: v for k, v in user.items() if k != "password"}
-            }
+        if user.get("email", "").lower() == credentials.email.lower():
+            if user["password"] == credentials.password:
+                print(f"DEBUG: Login successful for email: {credentials.email}")
+                return {
+                    "success": True,
+                    "access_token": f"mock_token_{user['id']}",
+                    "user": {k: v for k, v in user.items() if k != "password"}
+                }
+            else:
+                print(f"DEBUG: Login failed - Incorrect password for email: {credentials.email}")
     
+    print(f"DEBUG: Login failed - Email {credentials.email} not found")
     raise HTTPException(status_code=401, detail="Invalid credentials")
 
 # Clinics
