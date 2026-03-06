@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import './index.css'
 
-const API_URL = 'http://localhost:8000/api'
+const API_URL = 'https://clinicq-cid1.onrender.com'
 
 // Health motivational quotes that rotate every 5 seconds
 const healthQuotes = [
