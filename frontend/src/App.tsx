@@ -2,7 +2,12 @@ import { useState, useEffect } from 'react'
 import './index.css'
 
 const BASE_API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api'
-const API_URL = BASE_API_URL.endsWith('/') ? BASE_API_URL.slice(0, -1) : BASE_API_URL
+let normalizedUrl = BASE_API_URL.endsWith('/') ? BASE_API_URL.slice(0, -1) : BASE_API_URL
+// If hitting render and /api is missing, append it
+if (normalizedUrl.includes('onrender.com') && !normalizedUrl.endsWith('/api')) {
+    normalizedUrl += '/api'
+}
+const API_URL = normalizedUrl
 
 // Health motivational quotes that rotate every 5 seconds
 const healthQuotes = [
