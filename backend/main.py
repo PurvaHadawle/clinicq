@@ -815,6 +815,8 @@ def update_appointment_status(appointment_id: int, status: str): # status: compl
     
     elif status == 'fake_emergency':
         apt["status"] = "fake_emergency_reported"
+        clinic_id = apt["doctor_clinic_id"]
+        queue_manager.remove_patient(clinic_id, appointment_id)
         # Logic to flag patient for penalty would go here
     
     return {"success": True, "message": f"Status updated to {status}"}
@@ -878,10 +880,12 @@ async def book_appointment(appointment: AppointmentCreate):
     }
 
 @app.get("/api/appointments/my")
-def my_appointments():
+def my_appointments(patient_id: Optional[int] = None):
     # Return all appointments with clinic details
     apts = []
     for apt in appointments_db.values():
+        if patient_id and apt["patient_id"] != patient_id:
+            continue
         clinic = clinics_db.get(apt["doctor_clinic_id"])
         apt_copy = apt.copy()
         if clinic:

@@ -209,7 +209,7 @@ function App() {
     const fetchMyAppointments = async () => {
         if (!user) return
         try {
-            const response = await fetch(`${API_URL}/appointments/my`)
+            const response = await fetch(`${API_URL}/appointments/my?patient_id=${user.id}`)
             const data = await response.json()
             if (data.success) {
                 // Client-side filter for demo (since backend doesn't filter by user yet)
