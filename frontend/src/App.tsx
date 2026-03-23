@@ -768,82 +768,94 @@ function App() {
                     </div>
 
                     <div className="clinics-grid">
-                        {clinics.map((clinic) => (
-                            <div key={clinic.id} className="clinic-card">
-                                <div className="clinic-header">
-                                    <h3>{clinic.name}</h3>
-                                    <span className="wait-badge">{clinic.current_wait_time || 0} Min Wait</span>
-                                </div>
+                        {clinics
+                            .filter(clinic => {
+                                const activeBookedClinicIds = myAppointments
+                                    .filter((apt: any) => apt.status !== 'completed')
+                                    .map((apt: any) => apt.doctor_clinic_id);
+                                return !activeBookedClinicIds.includes(clinic.id);
+                            })
+                            .sort((a, b) => {
+                                if (sortBy === 'rating') return (b.rating_avg || 0) - (a.rating_avg || 0);
+                                if (sortBy === 'wait') return (a.current_wait_time || 0) - (b.current_wait_time || 0);
+                                return a.name.localeCompare(b.name);
+                            })
+                            .map((clinic) => (
+                                <div key={clinic.id} className="clinic-card">
+                                    <div className="clinic-header">
+                                        <h3>{clinic.name}</h3>
+                                        <span className="wait-badge">{clinic.current_wait_time || 0} Min Wait</span>
+                                    </div>
 
-                                <p className="clinic-address">
-                                    <a
-                                        href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(clinic.address)}`}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        style={{ color: 'var(--text-secondary)', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '5px' }}
+                                    <p className="clinic-address">
+                                        <a
+                                            href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(clinic.address)}`}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            style={{ color: 'var(--text-secondary)', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '5px' }}
+                                        >
+                                            📍 {clinic.address} <span style={{ fontSize: '12px', color: 'var(--primary-blue)' }}>(View Map)</span>
+                                        </a>
+                                    </p>
+
+                                    <div className="clinic-stats">
+                                        <div className="stat">
+                                            <span className="stat-number">{clinic.patients_in_queue || 0}</span>
+                                            <span className="stat-label">TOKENS<br />TODAY</span>
+                                        </div>
+                                        <div className="stat">
+                                            <span className="stat-number waiting">{clinic.waiting_count || 0}</span>
+                                            <span className="stat-label">WAITING</span>
+                                        </div>
+                                        <div className="stat">
+                                            <span className="stat-number progress">{clinic.in_progress_count || 0}</span>
+                                            <span className="stat-label">IN<br />PROGRESS</span>
+                                        </div>
+                                        <div className="stat">
+                                            <span className="stat-number completed">{clinic.completed_count || 0}</span>
+                                            <span className="stat-label">COMPLETED</span>
+                                        </div>
+                                    </div>
+
+                                    <div className="clinic-rating">
+                                        ⭐ {clinic.rating_avg || 0}
+                                        <span className="review-count">{clinic.total_ratings || 0} REVIEWS</span>
+                                    </div>
+
+                                    <div className="clinic-info">
+                                        <span className="info-item">🕒 {clinic.opening_time || '09:00'} - {clinic.closing_time || '21:00'}</span>
+                                        <span className="info-item">📞 {clinic.phone}</span>
+                                    </div>
+
+                                    <div className="doctor-info">
+                                        <strong>{clinic.doctor_name}</strong>
+                                        <div className="doctor-badges">
+                                            <span className="badge waiting-badge">{clinic.waiting_count || 0} waiting</span>
+                                            <span className="badge patient-badge">{clinic.patients_in_queue || 0} patients</span>
+                                        </div>
+                                        <span className={`status-badge ${clinic.queue_status === 'open' ? 'open' : 'closed'}`}>
+                                            {clinic.queue_status === 'open' ? '🟢 Open' : '🔴 Closed'}
+                                        </span>
+                                    </div>
+
+                                    <button
+                                        className="btn-book"
+                                        onClick={() => {
+                                            setBookingClinicId(clinic.id)
+                                            setShowBookingModal(true)
+                                        }}
+                                        disabled={clinic.queue_status !== 'open'}
                                     >
-                                        📍 {clinic.address} <span style={{ fontSize: '12px', color: 'var(--primary-blue)' }}>(View Map)</span>
-                                    </a>
-                                </p>
+                                        Book Now
+                                    </button>
 
-                                <div className="clinic-stats">
-                                    <div className="stat">
-                                        <span className="stat-number">{clinic.patients_in_queue || 0}</span>
-                                        <span className="stat-label">TOKENS<br />TODAY</span>
-                                    </div>
-                                    <div className="stat">
-                                        <span className="stat-number waiting">{clinic.waiting_count || 0}</span>
-                                        <span className="stat-label">WAITING</span>
-                                    </div>
-                                    <div className="stat">
-                                        <span className="stat-number progress">{clinic.in_progress_count || 0}</span>
-                                        <span className="stat-label">IN<br />PROGRESS</span>
-                                    </div>
-                                    <div className="stat">
-                                        <span className="stat-number completed">{clinic.completed_count || 0}</span>
-                                        <span className="stat-label">COMPLETED</span>
-                                    </div>
+                                    <p className="estimated-wait">
+                                        💡 If booked now: ~{clinic.current_wait_time || 0} min estimated wait
+                                    </p>
+
+                                    <button className="btn-rate">⭐ Rate Clinic</button>
                                 </div>
-
-                                <div className="clinic-rating">
-                                    ⭐ {clinic.rating_avg || 0}
-                                    <span className="review-count">{clinic.total_ratings || 0} REVIEWS</span>
-                                </div>
-
-                                <div className="clinic-info">
-                                    <span className="info-item">🕒 {clinic.opening_time || '09:00'} - {clinic.closing_time || '21:00'}</span>
-                                    <span className="info-item">📞 {clinic.phone}</span>
-                                </div>
-
-                                <div className="doctor-info">
-                                    <strong>{clinic.doctor_name}</strong>
-                                    <div className="doctor-badges">
-                                        <span className="badge waiting-badge">{clinic.waiting_count || 0} waiting</span>
-                                        <span className="badge patient-badge">{clinic.patients_in_queue || 0} patients</span>
-                                    </div>
-                                    <span className={`status-badge ${clinic.queue_status === 'open' ? 'open' : 'closed'}`}>
-                                        {clinic.queue_status === 'open' ? '🟢 Open' : '🔴 Closed'}
-                                    </span>
-                                </div>
-
-                                <button
-                                    className="btn-book"
-                                    onClick={() => {
-                                        setBookingClinicId(clinic.id)
-                                        setShowBookingModal(true)
-                                    }}
-                                    disabled={clinic.queue_status !== 'open'}
-                                >
-                                    Book Now
-                                </button>
-
-                                <p className="estimated-wait">
-                                    💡 If booked now: ~{clinic.current_wait_time || 0} min estimated wait
-                                </p>
-
-                                <button className="btn-rate">⭐ Rate Clinic</button>
-                            </div>
-                        ))}
+                            ))}
                     </div>
                 </section>
 
