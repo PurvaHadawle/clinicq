@@ -791,6 +791,20 @@ def update_appointment_status(appointment_id: int, status: str): # status: compl
         clinic_id = apt["doctor_clinic_id"]
         queue_manager.remove_patient(clinic_id, appointment_id)
         
+        # Advance to the next patient in the queue
+        queue_state = queue_manager.get_queue_state(clinic_id)
+        next_apt_id = None
+        if queue_state["emergency"]:
+            next_apt_id = queue_state["emergency"][0]
+        elif queue_state["regular"]:
+            next_apt_id = queue_state["regular"][0]
+            
+        if next_apt_id:
+            next_apt = appointments_db.get(next_apt_id)
+            if next_apt and next_apt["status"] in ["waiting", "booked"]:
+                next_apt["status"] = "in_progress"
+                next_apt["started_at"] = datetime.now().isoformat()
+        
     elif status == 'in_progress':
         apt["status"] = "in_progress"
         apt["started_at"] = datetime.now().isoformat()

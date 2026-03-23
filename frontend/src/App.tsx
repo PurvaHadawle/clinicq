@@ -291,14 +291,7 @@ function App() {
         }
 
         try {
-            let certificateData = 'mock_cert.pdf'
-            if (role === 'doctor' && doctorForm.degreeFile) {
-                certificateData = await new Promise((resolve) => {
-                    const reader = new FileReader()
-                    reader.onloadend = () => resolve(reader.result as string)
-                    reader.readAsDataURL(doctorForm.degreeFile!)
-                })
-            }
+
 
             const response = await fetch(`${API_URL}/auth/register`, {
                 method: 'POST',
@@ -323,30 +316,6 @@ function App() {
             const data = await response.json()
 
             if (data.success) {
-                if (role === 'doctor') {
-                    try {
-                        await fetch(`${API_URL}/clinics`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                name: doctorForm.clinicName,
-                                locality: doctorForm.locality,
-                                address: doctorForm.address,
-                                phone: phone,
-                                specialization: doctorForm.specialization,
-                                consultation_time: parseInt(doctorForm.consultationTime),
-                                min_wait_time: parseInt(doctorForm.minWaitTime),
-                                opening_time: doctorForm.openingTime,
-                                closing_time: doctorForm.closingTime,
-                                experience: parseInt(doctorForm.experience || '0'),
-                                doctor_id: data.user.id,
-                                certificate: certificateData
-                            })
-                        })
-                    } catch (e) {
-                        console.error("Clinic creation failed during registration", e)
-                    }
-                }
                 alert('Registration successful! Logging you in...')
                 // Auto-login after registration
                 handleLogin(email, password)
@@ -647,104 +616,7 @@ function App() {
                             />
                         </div>
 
-                        {role === 'doctor' && (
-                            <div style={{ marginTop: '20px', borderTop: '1px solid var(--bg-border)', paddingTop: '20px' }}>
-                                <h3 style={{ marginBottom: '15px', color: 'var(--primary-blue)' }}>Clinic Details</h3>
-                                <div className="input-group">
-                                    <label>Clinic Name *</label>
-                                    <input
-                                        type="text"
-                                        placeholder="Clinic Name"
-                                        value={doctorForm.clinicName}
-                                        onChange={(e) => setDoctorForm({ ...doctorForm, clinicName: e.target.value })}
-                                        className="input"
-                                    />
-                                </div>
-                                <div className="input-group">
-                                    <label>Specialization *</label>
-                                    <input
-                                        type="text"
-                                        placeholder="e.g. Cardiologist"
-                                        value={doctorForm.specialization}
-                                        onChange={(e) => setDoctorForm({ ...doctorForm, specialization: e.target.value })}
-                                        className="input"
-                                    />
-                                </div>
-                                <div className="input-group">
-                                    <label>Locality *</label>
-                                    <select
-                                        className="input"
-                                        value={doctorForm.locality}
-                                        onChange={(e) => setDoctorForm({ ...doctorForm, locality: e.target.value })}
-                                    >
-                                        <option value="Airoli">Airoli</option>
-                                        <option value="Vashi">Vashi</option>
-                                        <option value="Nerul">Nerul</option>
-                                        <option value="Koperkhairane">Koperkhairane</option>
-                                    </select>
-                                </div>
-                                <div className="input-group">
-                                    <label>Full Address *</label>
-                                    <textarea
-                                        placeholder="Clinic full address"
-                                        value={doctorForm.address}
-                                        onChange={(e) => setDoctorForm({ ...doctorForm, address: e.target.value })}
-                                        className="input"
-                                        rows={2}
-                                    />
-                                </div>
-                                <div className="input-row">
-                                    <div className="input-group">
-                                        <label>Experience (Yrs)</label>
-                                        <input
-                                            type="number"
-                                            value={doctorForm.experience}
-                                            onChange={(e) => setDoctorForm({ ...doctorForm, experience: e.target.value })}
-                                            className="input"
-                                        />
-                                    </div>
-                                    <div className="input-group">
-                                        <label>Cons. Time (min)</label>
-                                        <input
-                                            type="number"
-                                            value={doctorForm.consultationTime}
-                                            onChange={(e) => setDoctorForm({ ...doctorForm, consultationTime: e.target.value })}
-                                            className="input"
-                                        />
-                                    </div>
-                                </div>
-                                <div className="input-row">
-                                    <div className="input-group">
-                                        <label>Opening Time</label>
-                                        <input
-                                            type="time"
-                                            value={doctorForm.openingTime}
-                                            onChange={(e) => setDoctorForm({ ...doctorForm, openingTime: e.target.value })}
-                                            className="input"
-                                        />
-                                    </div>
-                                    <div className="input-group">
-                                        <label>Closing Time</label>
-                                        <input
-                                            type="time"
-                                            value={doctorForm.closingTime}
-                                            onChange={(e) => setDoctorForm({ ...doctorForm, closingTime: e.target.value })}
-                                            className="input"
-                                        />
-                                    </div>
-                                </div>
-                                <div className="input-group">
-                                    <label>Degree Certificate/Work Permit *</label>
-                                    <input
-                                        type="file"
-                                        onChange={(e) => setDoctorForm({ ...doctorForm, degreeFile: e.target.files ? e.target.files[0] : null })}
-                                        className="input"
-                                        accept=".pdf,.jpg,.png"
-                                    />
-                                    <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>Please upload your medical degree or clinic permit for admin verification.</p>
-                                </div>
-                            </div>
-                        )}
+
                     </>
                 )}
 
@@ -1003,7 +875,8 @@ function App() {
             const response = await fetch(`${API_URL}/doctor/appointments?doctor_id=${doctorId}`)
             const data = await response.json()
             if (data.success) {
-                setDoctorAppointments(data.data)
+                const activeApts = data.data.filter((apt: any) => apt.status !== 'completed');
+                setDoctorAppointments(activeApts)
             }
         } catch (error) {
             console.error('Failed to fetch doctor appointments:', error)
