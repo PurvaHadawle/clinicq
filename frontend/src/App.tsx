@@ -1,13 +1,37 @@
 import { useState, useEffect } from 'react'
+import { io } from 'socket.io-client'
 import './index.css'
 
-const BASE_API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api'
+const getSocketToken = () => localStorage.getItem('clinicQ_token');
+const socket = io(import.meta.env.VITE_API_URL ? import.meta.env.VITE_API_URL.replace('/api', '') : 'http://localhost:5000', {
+    auth: (cb) => {
+        cb({ token: getSocketToken() });
+    }
+});
+
+const BASE_API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
 let normalizedUrl = BASE_API_URL.endsWith('/') ? BASE_API_URL.slice(0, -1) : BASE_API_URL
 // If hitting render and /api is missing, append it
 if (normalizedUrl.includes('onrender.com') && !normalizedUrl.endsWith('/api')) {
     normalizedUrl += '/api'
 }
 const API_URL = normalizedUrl
+
+// Auth fetch wrapper
+const originalFetch = window.fetch;
+window.fetch = async (url, options = {}) => {
+    const urlStr = url.toString();
+    if (urlStr.includes('/api') && !urlStr.includes('/login') && !urlStr.includes('/register')) {
+        const token = localStorage.getItem('clinicQ_token');
+        if (token) {
+            options.headers = {
+                ...options.headers,
+                'Authorization': `Bearer ${token}`
+            };
+        }
+    }
+    return originalFetch(url, options);
+};
 
 // Health motivational quotes that rotate every 5 seconds
 const healthQuotes = [
@@ -77,9 +101,9 @@ function App() {
         degreeFile: null as File | null
     })
     const [doctorClinics, setDoctorClinics] = useState<any[]>([])
-    const [currentClinicId, setCurrentClinicId] = useState<number | null>(null)
+    const [currentClinicId, setCurrentClinicId] = useState<string | null>(null)
     const [showBookingModal, setShowBookingModal] = useState(false)
-    const [bookingClinicId, setBookingClinicId] = useState<number | null>(null)
+    const [bookingClinicId, setBookingClinicId] = useState<string | null>(null)
     const [pendingClinics, setPendingClinics] = useState<any[]>([])
     const [selectedCert, setSelectedCert] = useState<string | null>(null)
 
@@ -115,43 +139,60 @@ function App() {
         }
     }, [view])
 
-    // Persistence
+    // Persistence - Check authentication state on page load
     useEffect(() => {
         const savedUser = localStorage.getItem('clinicQ_user')
-        const savedView = localStorage.getItem('clinicQ_view')
-        if (savedUser) {
-            const parsedUser = JSON.parse(savedUser)
-            setUser(parsedUser)
-            if (savedView) setView(savedView)
+        const savedToken = localStorage.getItem('clinicQ_token')
+        
+        if (savedUser && savedToken) {
+            try {
+                const parsedUser = JSON.parse(savedUser)
+                setUser(parsedUser)
 
-            if (parsedUser.role === 'doctor') {
-                const savedClinics = localStorage.getItem('clinicQ_doctorClinics')
-                const savedClinicId = localStorage.getItem('clinicQ_currentClinicId')
-                if (savedClinics) setDoctorClinics(JSON.parse(savedClinics))
-                if (savedClinicId) setCurrentClinicId(parseInt(savedClinicId))
+                if (parsedUser.role === 'doctor') {
+                    const savedClinics = localStorage.getItem('clinicQ_doctorClinics')
+                    const savedClinicId = localStorage.getItem('clinicQ_currentClinicId')
+                    if (savedClinics) {
+                        const clinics = JSON.parse(savedClinics)
+                        setDoctorClinics(clinics)
+                        if (savedClinicId) {
+                            setCurrentClinicId(savedClinicId)
+                        } else if (clinics.length > 0) {
+                            setCurrentClinicId(clinics[0].id)
+                        }
+                        setView(clinics.length > 0 ? 'doctor-dashboard' : 'doctor-setup')
+                    } else {
+                        setView('doctor-setup')
+                    }
+                } else if (parsedUser.role === 'admin') {
+                    setView('admin-dashboard')
+                } else {
+                    setView('dashboard')
+                }
+            } catch (error) {
+                localStorage.removeItem('clinicQ_user');
+                localStorage.removeItem('clinicQ_token');
+                localStorage.removeItem('clinicQ_doctorClinics');
+                localStorage.removeItem('clinicQ_currentClinicId');
+                setUser(null);
             }
-        } else {
-            setEmail('')
-            setPassword('')
-            setPhone('')
         }
     }, [])
 
     useEffect(() => {
         if (user) {
             localStorage.setItem('clinicQ_user', JSON.stringify(user))
-            localStorage.setItem('clinicQ_view', view)
             if (user.role === 'doctor') {
                 localStorage.setItem('clinicQ_doctorClinics', JSON.stringify(doctorClinics))
                 if (currentClinicId) localStorage.setItem('clinicQ_currentClinicId', currentClinicId.toString())
             }
         } else {
             localStorage.removeItem('clinicQ_user')
-            localStorage.removeItem('clinicQ_view')
+            localStorage.removeItem('clinicQ_token')
             localStorage.removeItem('clinicQ_doctorClinics')
             localStorage.removeItem('clinicQ_currentClinicId')
         }
-    }, [user, view, doctorClinics, currentClinicId])
+    }, [user, doctorClinics, currentClinicId])
 
     // Clear form when switching views
     useEffect(() => {
@@ -229,6 +270,30 @@ function App() {
         }
     }, [user, view])
 
+    // Socket.io Realtime Sync Listener
+    useEffect(() => {
+        if (user) {
+            if (user.role === 'doctor' && currentClinicId) {
+                socket.emit('join_clinic_queue', currentClinicId);
+            }
+            
+            const queueUpdateHandler = () => {
+                if (view === 'dashboard') {
+                    fetchMyAppointments();
+                    fetchClinics(); // Refresh wait times
+                } else if (view === 'doctor-dashboard' && user.role === 'doctor') {
+                    fetchDoctorAppointments(user.id);
+                }
+            };
+
+            socket.on('queue_updated', queueUpdateHandler);
+
+            return () => {
+                socket.off('queue_updated', queueUpdateHandler);
+            };
+        }
+    }, [user, view, currentClinicId]);
+
     const handleLogin = async (loginEmail: string, password: string) => {
         try {
             const response = await fetch(`${API_URL}/auth/login`, {
@@ -247,11 +312,14 @@ function App() {
 
             if (data.success) {
                 setUser(data.user)
+                if (data.token) {
+                    localStorage.setItem('clinicQ_token', data.token)
+                }
 
                 if (data.user.role === 'doctor') {
                     // Check if doctor has a clinic setup
                     try {
-                        const profileRes = await fetch(`${API_URL}/doctor/me?email=${data.user.email}`)
+                        const profileRes = await fetch(`${API_URL}/clinics/doctor?email=${data.user.email}`)
                         const profileData = await profileRes.json()
 
                         if (profileData.has_clinic) {
@@ -316,6 +384,9 @@ function App() {
             const data = await response.json()
 
             if (data.success) {
+                if (data.token) {
+                    localStorage.setItem('clinicQ_token', data.token)
+                }
                 alert('Registration successful! Logging you in...')
                 // Auto-login after registration
                 handleLogin(email, password)
@@ -373,8 +444,21 @@ function App() {
                     <a href="#features" className="btn-text" style={{ textDecoration: 'none', display: 'flex', alignItems: 'center' }}>FEATURES</a>
                 </div>
                 <div className="nav-actions">
-                    <button className="btn-outline" onClick={() => { setIsRegisterMode(true); setView('login'); }}>JOIN</button>
-                    <button className="btn-text" onClick={() => { setIsRegisterMode(false); setView('login'); }}>LOG IN</button>
+                    {user ? (
+                        <>
+                           <button className="btn-primary" onClick={() => {
+                                if (user.role === 'doctor') {
+                                    setView(doctorClinics && doctorClinics.length > 0 ? 'doctor-dashboard' : 'doctor-setup')
+                                } else if (user.role === 'admin') setView('admin-dashboard')
+                                else setView('dashboard')
+                           }}>DASHBOARD</button>
+                        </>
+                    ) : (
+                        <>
+                            <button className="btn-outline" onClick={() => { setIsRegisterMode(true); setView('login'); }}>JOIN</button>
+                            <button className="btn-text" onClick={() => { setIsRegisterMode(false); setView('login'); }}>LOG IN</button>
+                        </>
+                    )}
                 </div>
             </nav>
 
@@ -405,9 +489,20 @@ function App() {
                             placeholder="Find your clinic..."
                             className="search-input"
                         />
-                        <button className="btn-primary" onClick={() => setView('login')}>
-                            GET STARTED
-                        </button>
+                        {user ? (
+                            <button className="btn-primary" onClick={() => {
+                                if (user.role === 'doctor') {
+                                    setView(doctorClinics && doctorClinics.length > 0 ? 'doctor-dashboard' : 'doctor-setup')
+                                } else if (user.role === 'admin') setView('admin-dashboard')
+                                else setView('dashboard')
+                            }}>
+                                GO TO DASHBOARD
+                            </button>
+                        ) : (
+                            <button className="btn-primary" onClick={() => setView('login')}>
+                                GET STARTED
+                            </button>
+                        )}
                     </div>
 
                     {/* Floating Quote Card (Moved) */}
@@ -501,157 +596,181 @@ function App() {
         </div>
     )
 
-    // Login/Register Modal
+    // Login / Register — Animated Sliding Panel
     const renderLogin = () => (
-        <div className="modal-overlay" onClick={() => setView('landing')}>
-            <div className="login-modal" onClick={(e) => e.stopPropagation()}>
-                <button className="modal-close" onClick={() => setView('landing')}>×</button>
-
-                <div className="auth-toggle">
-                    <button
-                        className={`toggle-btn ${!isRegisterMode ? 'active' : ''}`}
-                        onClick={() => setIsRegisterMode(false)}
-                    >
-                        Login
-                    </button>
-                    <button
-                        className={`toggle-btn ${isRegisterMode ? 'active' : ''}`}
-                        onClick={() => setIsRegisterMode(true)}
-                    >
-                        Register
-                    </button>
-                </div>
-
-                <h2>{isRegisterMode ? 'Create Account' : 'Welcome Back'}</h2>
-                <p className="login-subtitle">
-                    {isRegisterMode ? 'Join ClinicQ to book appointments' : 'Sign in to manage your appointments'}
-                </p>
-
-                {isRegisterMode && (
-                    <>
-                        <div className="role-selection" style={{ display: 'flex', gap: '15px', marginBottom: '20px' }}>
-                            <button
-                                className={`role-card ${role === 'patient' ? 'active' : ''}`}
-                                onClick={() => setRole('patient')}
-                                style={{
-                                    flex: 1,
-                                    padding: '15px',
-                                    borderRadius: '10px',
-                                    border: role === 'patient' ? '2px solid #007bff' : '1px solid #ddd',
-                                    background: role === 'patient' ? 'rgba(0, 123, 255, 0.1)' : 'var(--input-bg)',
-                                    cursor: 'pointer',
-                                    display: 'flex',
-                                    flexDirection: 'column',
-                                    alignItems: 'center',
-                                    gap: '5px'
-                                }}
-                            >
-                                <span style={{ fontSize: '24px' }}>👤</span>
-                                <span style={{ fontWeight: 600 }}>Patient</span>
-                            </button>
-                            <button
-                                className={`role-card ${role === 'doctor' ? 'active' : ''}`}
-                                onClick={() => setRole('doctor')}
-                                style={{
-                                    flex: 1,
-                                    padding: '15px',
-                                    borderRadius: '10px',
-                                    border: role === 'doctor' ? '2px solid #007bff' : '1px solid #ddd',
-                                    background: role === 'doctor' ? 'rgba(0, 123, 255, 0.1)' : 'var(--input-bg)',
-                                    cursor: 'pointer',
-                                    display: 'flex',
-                                    flexDirection: 'column',
-                                    alignItems: 'center',
-                                    gap: '5px'
-                                }}
-                            >
-                                <span style={{ fontSize: '24px' }}>👨‍⚕️</span>
-                                <span style={{ fontWeight: 600 }}>Doctor</span>
-                            </button>
-                        </div>
-                        <div className="input-group">
-                            <label>Full Name *</label>
-                            <input
-                                type="text"
-                                placeholder="Enter your full name"
-                                value={name}
-                                onChange={(e) => setName(e.target.value)}
-                                className="input"
-                            />
-                        </div>
-
-                        <div className="input-row">
-                            <div className="input-group">
-                                <label>Age *</label>
-                                <input
-                                    type="number"
-                                    placeholder="Age"
-                                    value={age}
-                                    onChange={(e) => setAge(e.target.value)}
-                                    className="input"
-                                />
-                            </div>
-                            <div className="input-group">
-                                <label>Gender *</label>
-                                <select
-                                    value={gender}
-                                    onChange={(e) => setGender(e.target.value)}
-                                    className="input"
-                                >
-                                    <option value="Male">Male</option>
-                                    <option value="Female">Female</option>
-                                    <option value="Other">Other</option>
-                                </select>
-                            </div>
-                        </div>
-
-                        <div className="input-group">
-                            <label>Phone Number *</label>
-                            <input
-                                type="tel"
-                                placeholder="Enter 10-digit phone"
-                                value={phone}
-                                onChange={(e) => setPhone(e.target.value)}
-                                className="input"
-                            />
-                        </div>
-
-
-                    </>
-                )}
-
-                <div className="input-group">
-                    <label>Email *</label>
-                    <input
-                        type="email"
-                        placeholder="Enter your email"
-                        value={email}
-                        onChange={(e) => setEmail(e.target.value)}
-                        className="input"
-                        autoComplete="off"
-                    />
-                </div>
-
-                <div className="input-group">
-                    <label>Password *</label>
-                    <input
-                        type="password"
-                        placeholder="Enter password"
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        className="input"
-                        autoComplete="new-password"
-                    />
-                </div>
-
-                <button
-                    className="btn-primary full-width"
-                    onClick={() => isRegisterMode ? handleRegister() : handleLogin(email, password)}
-                >
-                    {isRegisterMode ? 'REGISTER' : 'LOG IN'}
-                </button>
+        <div className="auth-page">
+            {/* Animated background blobs */}
+            <div className="auth-blobs">
+                <div className="auth-blob auth-blob-1" />
+                <div className="auth-blob auth-blob-2" />
+                <div className="auth-blob auth-blob-3" />
             </div>
-        </div >
+
+            {/* Back to home */}
+            <button className="auth-back-btn" onClick={() => setView('landing')}>
+                ← Back to Home
+            </button>
+
+            {/* Main sliding container */}
+            <div className={`auth-container ${isRegisterMode ? 'auth-register-active' : ''}`}>
+
+                {/* ── SIGN UP FORM (right side) ── */}
+                <div className="auth-form-box auth-sign-up">
+                    <div className="auth-form-header">
+                        <div className="auth-logo">🏥</div>
+                        <h1>Create Account</h1>
+                        <p className="auth-subtitle">Join ClinicQ and skip the wait</p>
+                    </div>
+
+                    {/* Role selector */}
+                    <div className="auth-role-selector">
+                        <button
+                            type="button"
+                            className={`auth-role-btn ${role === 'patient' ? 'active' : ''}`}
+                            onClick={() => setRole('patient')}
+                        >
+                            👤 Patient
+                        </button>
+                        <button
+                            type="button"
+                            className={`auth-role-btn ${role === 'doctor' ? 'active' : ''}`}
+                            onClick={() => setRole('doctor')}
+                        >
+                            🩺 Doctor
+                        </button>
+                    </div>
+
+                    <div className="auth-input-group">
+                        <label>Full Name *</label>
+                        <div className="auth-input-wrap">
+                            <span className="auth-input-icon">👤</span>
+                            <input type="text" placeholder="Dr. Priya Mehta" value={name}
+                                onChange={e => setName(e.target.value)} className="auth-input" />
+                        </div>
+                    </div>
+
+                    <div className="auth-input-row">
+                        <div className="auth-input-group">
+                            <label>Age *</label>
+                            <input type="number" placeholder="28" value={age}
+                                onChange={e => setAge(e.target.value)} className="auth-input" />
+                        </div>
+                        <div className="auth-input-group">
+                            <label>Gender *</label>
+                            <select value={gender} onChange={e => setGender(e.target.value)} className="auth-input">
+                                <option value="Male">Male</option>
+                                <option value="Female">Female</option>
+                                <option value="Other">Other</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div className="auth-input-group">
+                        <label>Phone *</label>
+                        <div className="auth-input-wrap">
+                            <span className="auth-input-icon">📱</span>
+                            <input type="tel" placeholder="9876543210" value={phone}
+                                onChange={e => setPhone(e.target.value)} className="auth-input" />
+                        </div>
+                    </div>
+
+                    <div className="auth-input-group">
+                        <label>Email *</label>
+                        <div className="auth-input-wrap">
+                            <span className="auth-input-icon">✉️</span>
+                            <input type="email" placeholder="you@example.com" value={email}
+                                onChange={e => setEmail(e.target.value)} className="auth-input" autoComplete="off" />
+                        </div>
+                    </div>
+
+                    <div className="auth-input-group">
+                        <label>Password *</label>
+                        <div className="auth-input-wrap">
+                            <span className="auth-input-icon">🔒</span>
+                            <input type="password" placeholder="Min. 8 characters" value={password}
+                                onChange={e => setPassword(e.target.value)} className="auth-input" autoComplete="new-password" />
+                        </div>
+                    </div>
+
+                    <button className="auth-btn-primary" onClick={handleRegister}>
+                        Create Account
+                    </button>
+
+                    <p className="auth-mobile-switch">
+                        Already have an account?{' '}
+                        <a href="#" onClick={e => { e.preventDefault(); setIsRegisterMode(false); }}>Sign in</a>
+                    </p>
+                </div>
+
+                {/* ── SIGN IN FORM (left side) ── */}
+                <div className="auth-form-box auth-sign-in">
+                    <div className="auth-form-header">
+                        <div className="auth-logo">🏥</div>
+                        <h1>Welcome Back</h1>
+                        <p className="auth-subtitle">Sign in to manage your queue</p>
+                    </div>
+
+                    <div className="auth-input-group">
+                        <label>Email Address</label>
+                        <div className="auth-input-wrap">
+                            <span className="auth-input-icon">✉️</span>
+                            <input type="email" placeholder="you@example.com" value={email}
+                                onChange={e => setEmail(e.target.value)} className="auth-input" autoComplete="email" />
+                        </div>
+                    </div>
+
+                    <div className="auth-input-group">
+                        <label>Password</label>
+                        <div className="auth-input-wrap">
+                            <span className="auth-input-icon">🔒</span>
+                            <input type="password" placeholder="Your password" value={password}
+                                onChange={e => setPassword(e.target.value)} className="auth-input"
+                                autoComplete="current-password"
+                                onKeyDown={e => e.key === 'Enter' && handleLogin(email, password)} />
+                        </div>
+                    </div>
+
+                    <div className="auth-forgot-row">
+                        <a href="#" className="auth-forgot-link" onClick={e => e.preventDefault()}>Forgot password?</a>
+                    </div>
+
+                    {/* Demo credentials hint */}
+                    <div className="auth-demo-hint">
+                        <strong>Demo:</strong> kedar@gmail.com / kedar123 &nbsp;|&nbsp; vaibhav@gmail.com / vaibhav123
+                    </div>
+
+                    <button className="auth-btn-primary" onClick={() => handleLogin(email, password)}>
+                        Sign In
+                    </button>
+
+                    <p className="auth-mobile-switch">
+                        Don't have an account?{' '}
+                        <a href="#" onClick={e => { e.preventDefault(); setIsRegisterMode(true); }}>Sign up</a>
+                    </p>
+                </div>
+
+                {/* ── OVERLAY PANEL ── */}
+                <div className="auth-overlay-container">
+                    <div className="auth-overlay">
+                        {/* Left panel — visible when sign-up is active */}
+                        <div className="auth-overlay-panel auth-overlay-left">
+                            <div className="auth-overlay-brand">🏥 ClinicQ</div>
+                            <h2>Welcome Back!</h2>
+                            <p>Already have an account? Sign in to access your dashboard and manage your queue.</p>
+                            <button className="auth-btn-ghost" onClick={() => setIsRegisterMode(false)}>Sign In</button>
+                        </div>
+                        {/* Right panel — visible by default */}
+                        <div className="auth-overlay-panel auth-overlay-right">
+                            <div className="auth-overlay-brand">🏥 ClinicQ</div>
+                            <h2>Hello, Friend! 👋</h2>
+                            <p>New here? Register in seconds and start managing your clinic queue or book appointments.</p>
+                            <button className="auth-btn-ghost" onClick={() => setIsRegisterMode(true)}>Sign Up</button>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
     )
 
     // User Dashboard
@@ -669,8 +788,15 @@ function App() {
                         {isDarkMode ? '☀️' : '🌙'}
                     </button>
                     <button className="btn-logout" onClick={() => {
-                        setUser(null)
-                        setView('landing')
+                        // Clear all authentication data
+                        localStorage.removeItem('clinicQ_user');
+                        localStorage.removeItem('clinicQ_token');
+                        localStorage.removeItem('clinicQ_doctorClinics');
+                        localStorage.removeItem('clinicQ_currentClinicId');
+                        setUser(null);
+                        setDoctorClinics([]);
+                        setCurrentClinicId(null);
+                        setView('landing');
                     }}>
                         Logout
                     </button>
@@ -841,7 +967,7 @@ function App() {
                                     <button
                                         className="btn-book"
                                         onClick={() => {
-                                            setBookingClinicId(clinic.id)
+                                        setBookingClinicId(clinic.id.toString())
                                             setShowBookingModal(true)
                                         }}
                                         disabled={clinic.queue_status !== 'open'}
@@ -865,10 +991,10 @@ function App() {
                             <h2 style={{ marginBottom: '10px' }}>Select Booking Type</h2>
                             <p style={{ color: 'var(--text-secondary)', marginBottom: '25px' }}>In case of emergencies, priority will be given.</p>
                             <div style={{ display: 'grid', gap: '15px' }}>
-                                <button className="btn-primary" onClick={() => bookingClinicId && bookAppointment(bookingClinicId, false)}>
+                                <button className="btn-primary" onClick={() => bookingClinicId && bookAppointment(bookingClinicId as any, false)}>
                                     📅 Normal Booking
                                 </button>
-                                <button className="btn-primary" style={{ background: '#ef4444' }} onClick={() => bookingClinicId && bookAppointment(bookingClinicId, true)}>
+                                <button className="btn-primary" style={{ background: '#ef4444' }} onClick={() => bookingClinicId && bookAppointment(bookingClinicId as any, true)}>
                                     🚨 Emergency Booking
                                 </button>
                                 <button className="btn-text" onClick={() => setShowBookingModal(false)} style={{ marginTop: '10px' }}>Cancel</button>
@@ -902,46 +1028,45 @@ function App() {
         }
 
         try {
-            let certificateData = 'mock_cert.pdf'
-            if (doctorForm.degreeFile) {
-                certificateData = await new Promise((resolve) => {
-                    const reader = new FileReader()
-                    reader.onloadend = () => resolve(reader.result as string)
-                    reader.readAsDataURL(doctorForm.degreeFile!)
-                })
-            }
-
             const response = await fetch(`${API_URL}/clinics`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${localStorage.getItem('clinicQ_token')}`
+                },
                 body: JSON.stringify({
                     name: doctorForm.clinicName,
                     locality: doctorForm.locality,
                     address: doctorForm.address,
                     phone: user.phone || '0000000000',
                     specialization: doctorForm.specialization,
-                    consultation_time: parseInt(doctorForm.consultationTime),
-                    min_wait_time: parseInt(doctorForm.minWaitTime),
-                    opening_time: doctorForm.openingTime,
-                    closing_time: doctorForm.closingTime,
-                    experience: parseInt(doctorForm.experience || '0'),
-                    doctor_id: user.id,
-                    certificate: certificateData
+                    consultationTime: parseInt(doctorForm.consultationTime),
+                    minWaitTime: parseInt(doctorForm.minWaitTime),
+                    openingTime: doctorForm.openingTime,
+                    closingTime: doctorForm.closingTime,
+                    experience: parseInt(doctorForm.experience || '0')
                 })
             })
 
             const data = await response.json()
             if (data.success) {
-                alert('Clinic Added Successfully!')
+                if (user.role === 'doctor') {
+                    alert('Clinic created and auto-approved! You can start practicing immediately.')
+                } else {
+                    alert('Clinic Added Successfully!')
+                }
                 const profileRes = await fetch(`${API_URL}/doctor/me?email=${user.email}`)
                 const profileData = await profileRes.json()
                 setDoctorClinics(profileData.clinics)
                 setCurrentClinicId(data.data.id)
                 setView('doctor-dashboard')
                 fetchDoctorAppointments(user.id)
+            } else {
+                alert(`Setup failed: ${data.detail || 'Unknown error'}`)
             }
         } catch (error) {
-            alert('Setup failed. Please try again.')
+            console.error('Doctor setup error:', error)
+            alert('Setup failed. Please check your connection and try again.')
         }
     }
 
@@ -960,37 +1085,32 @@ function App() {
             })
             const data = await response.json()
             if (data.success) {
-                setUser(data.data)
+                // Backend returns data.user
+                const updatedUser = data.user || data.data
+                setUser(updatedUser)
+                localStorage.setItem('clinicQ_user', JSON.stringify(updatedUser))
                 alert('Profile updated successfully!')
+            } else {
+                alert(`Update failed: ${data.detail || 'Unknown error'}`)
             }
         } catch (error) {
-            alert('Update failed')
+            alert('Update failed. Please try again.')
         }
     }
 
     const handleUpdateClinic = async () => {
         if (!currentClinicId) return
         try {
-            let updatePayload: any = {
+            const updatePayload: any = {
                 name: doctorForm.clinicName,
                 locality: doctorForm.locality,
                 address: doctorForm.address,
                 specialization: doctorForm.specialization,
-                consultation_time: parseInt(doctorForm.consultationTime),
-                min_wait_time: parseInt(doctorForm.minWaitTime),
-                opening_time: doctorForm.openingTime,
-                closing_time: doctorForm.closingTime,
+                consultationTime: parseInt(doctorForm.consultationTime),
+                minWaitTime: parseInt(doctorForm.minWaitTime),
+                openingTime: doctorForm.openingTime,
+                closingTime: doctorForm.closingTime,
                 experience: parseInt(doctorForm.experience || '0')
-            }
-
-            if (doctorForm.degreeFile) {
-                const certificateData = await new Promise((resolve) => {
-                    const reader = new FileReader()
-                    reader.onloadend = () => resolve(reader.result as string)
-                    reader.readAsDataURL(doctorForm.degreeFile!)
-                })
-                updatePayload.certificate_url = certificateData
-                updatePayload.verification_status = 'pending'
             }
 
             const response = await fetch(`${API_URL}/clinics/${currentClinicId}`, {
@@ -1003,9 +1123,12 @@ function App() {
                 alert('Clinic updated successfully!')
                 const updatedClinics = doctorClinics.map(c => c.id === currentClinicId ? data.data : c)
                 setDoctorClinics(updatedClinics)
+                localStorage.setItem('clinicQ_doctorClinics', JSON.stringify(updatedClinics))
+            } else {
+                alert(`Update failed: ${data.detail || 'Unknown error'}`)
             }
         } catch (error) {
-            alert('Clinic update failed')
+            alert('Clinic update failed. Please try again.')
         }
     }
 
@@ -1069,17 +1192,19 @@ function App() {
         }
     }
 
-    const handleVerifyClinic = async (clinicId: number, status: 'approved' | 'rejected') => {
+    const handleVerifyClinic = async (clinicId: string, status: 'approved' | 'rejected') => {
         try {
             const response = await fetch(`${API_URL}/admin/verify-clinic`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ clinic_id: clinicId, status })
+                body: JSON.stringify({ clinicId, status })
             })
             const data = await response.json()
             if (data.success) {
                 alert(`Clinic ${status} successfully!`)
                 fetchPendingClinics()
+            } else {
+                alert(`Failed: ${data.detail}`)
             }
         } catch (error) {
             alert('Failed to verify clinic')
@@ -1422,7 +1547,14 @@ function App() {
                         </div>
                     </div>
                     <button className="btn-logout" onClick={() => {
+                        // Clear all authentication data
+                        localStorage.removeItem('clinicQ_user');
+                        localStorage.removeItem('clinicQ_token');
+                        localStorage.removeItem('clinicQ_doctorClinics');
+                        localStorage.removeItem('clinicQ_currentClinicId');
                         setUser(null);
+                        setDoctorClinics([]);
+                        setCurrentClinicId(null);
                         setView('landing');
                     }}>Logout</button>
                 </nav>
@@ -1440,8 +1572,7 @@ function App() {
                                     className="filter-select"
                                     value={currentClinicId || ''}
                                     onChange={(e) => {
-                                        const id = parseInt(e.target.value)
-                                        setCurrentClinicId(id)
+                                        setCurrentClinicId(e.target.value)
                                         fetchDoctorAppointments(user.id)
                                     }}
                                 >
@@ -1454,10 +1585,10 @@ function App() {
                     <div className="doctor-actions" style={{ marginBottom: '20px', display: 'flex', gap: '10px' }}>
                         <button className="btn-outline" onClick={() => fetchDoctorAppointments(user.id)}>🔄 Refresh List</button>
                         <button className="btn-primary" onClick={() => {
-                            const newStatus = currentClinic?.queue_status === 'open' ? 'closed' : 'open'
+                            const newStatus = currentClinic?.queueStatus === 'open' ? 'closed' : 'open'
                             handleUpdateClinicStatus(newStatus)
                         }}>
-                            {currentClinic?.queue_status === 'open' ? '🔴 Close Queue' : '🟢 Open Queue'}
+                            {currentClinic?.queueStatus === 'open' ? '🔴 Close Queue' : '🟢 Open Queue'}
                         </button>
                     </div>
 
@@ -1469,7 +1600,12 @@ function App() {
                         ) : (
                             <div className="appointments-grid" style={{ display: 'grid', gap: '15px' }}>
                                 {doctorAppointments
-                                    .filter(apt => apt.doctor_clinic_id === currentClinicId)
+                                    .filter(apt => {
+                                        // Compare as strings since IDs may be MongoDB ObjectIds
+                                        const aptClinicId = apt.doctor_clinic_id?.toString()
+                                        const selClinicId = currentClinicId?.toString()
+                                        return aptClinicId === selClinicId
+                                    })
                                     .map(apt => (
                                         <div key={apt.id} className="appointment-card" style={{
                                             borderLeft: apt.is_emergency ? '4px solid red' : '4px solid var(--primary-blue)',
@@ -1558,20 +1694,44 @@ function App() {
     }
 
     const handleUpdateClinicStatus = async (status: string) => {
-        if (!currentClinicId) return
+        if (!currentClinicId) {
+            alert('No clinic selected')
+            return
+        }
+        
+        const token = localStorage.getItem('clinicQ_token');
+        if (!token) {
+            alert('Please login again to update queue status')
+            setView('login')
+            return
+        }
+        
         try {
+            console.log('Updating clinic status:', { id: currentClinicId, status, token: token ? 'present' : 'missing' })
+            
             const response = await fetch(`${API_URL}/clinics/${currentClinicId}`, {
                 method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ queue_status: status })
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify({ queueStatus: status })
             })
             const data = await response.json()
+            
+            console.log('Update response:', data)
+            
             if (data.success) {
                 const updatedClinics = doctorClinics.map(c => c.id === currentClinicId ? data.data : c)
                 setDoctorClinics(updatedClinics)
+                localStorage.setItem('clinicQ_doctorClinics', JSON.stringify(updatedClinics))
+                alert(`Queue ${status === 'open' ? 'opened' : 'closed'} successfully!`)
+            } else {
+                alert(`Failed to update queue: ${data.detail || 'Unknown error'}`)
             }
         } catch (error) {
-            alert('Failed to update status')
+            console.error('Update clinic status error:', error)
+            alert('Failed to update status. Please try again.')
         }
     }
 
@@ -1588,7 +1748,17 @@ function App() {
                         🔄 Refresh List
                     </button>
                 </div>
-                <button className="btn-outline" onClick={() => setView('landing')}>Logout</button>
+                <button className="btn-outline" onClick={() => {
+                    // Clear all authentication data
+                    localStorage.removeItem('clinicQ_user');
+                    localStorage.removeItem('clinicQ_token');
+                    localStorage.removeItem('clinicQ_doctorClinics');
+                    localStorage.removeItem('clinicQ_currentClinicId');
+                    setUser(null);
+                    setDoctorClinics([]);
+                    setCurrentClinicId(null);
+                    setView('landing');
+                }}>Logout</button>
             </div>
 
             {pendingClinics.length === 0 ? (
