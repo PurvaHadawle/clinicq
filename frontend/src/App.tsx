@@ -734,10 +734,6 @@ function App() {
                         <a href="#" className="auth-forgot-link" onClick={e => e.preventDefault()}>Forgot password?</a>
                     </div>
 
-                    {/* Demo credentials hint */}
-                    <div className="auth-demo-hint">
-                        <strong>Demo:</strong> kedar@gmail.com / kedar123 &nbsp;|&nbsp; vaibhav@gmail.com / vaibhav123
-                    </div>
 
                     <button className="auth-btn-primary" onClick={() => handleLogin(email, password)}>
                         Sign In
