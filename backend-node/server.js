@@ -10,9 +10,9 @@ const connectDB = require('./config/db');
 // Connect Database
 connectDB();
 
-// Seed Default Admin
-const seedAdmin = require('./config/seed');
-seedAdmin();
+// Seed Default Admin & Demo Users
+const seedApp = require('./config/seed');
+seedApp();
 
 const app = express();
 const server = http.createServer(app);
