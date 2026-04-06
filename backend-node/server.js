@@ -71,6 +71,7 @@ const clinicRoutes = require('./routes/clinicRoutes');
 const appointmentRoutes = require('./routes/appointmentRoutes');
 const userRoutes = require('./routes/userRoutes');
 const adminRoutes = require('./routes/adminRoutes');
+const seedRoutes = require('./routes/seedRoutes');
 
 // Auth Rate Limiting
 const authLimiter = rateLimit({
@@ -85,6 +86,7 @@ app.use('/api/clinics', clinicRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/appointments', appointmentRoutes);
+app.use('/api/seed', seedRoutes);
 // Backward compat: /api/doctor/me -> clinics/doctor, /api/doctor/appointments -> appointments/doctor
 app.get('/api/doctor/me', require('./controllers/clinicController').getDoctorClinics);
 app.get('/api/doctor/appointments', require('./controllers/appointmentController').getDoctorAppointments);
