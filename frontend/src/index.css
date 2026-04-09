@@ -1078,3 +1078,227 @@ select.auth-input option { background:#1A2332; color:#E2E8F0; }
   .auth-input-row { grid-template-columns:1fr; }
 }
 
+/* =============================================
+   DOCTOR SETUP / PROFILE COMPLETION
+   ============================================= */
+
+.setup-page-wrapper {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 20px;
+  background: radial-gradient(circle at top right, rgba(0, 168, 255, 0.05), transparent),
+              radial-gradient(circle at bottom left, rgba(16, 185, 129, 0.05), transparent),
+              var(--bg-primary);
+}
+
+.setup-card {
+  width: 100%;
+  max-width: 1000px;
+  background: var(--bg-card);
+  border-radius: 24px;
+  border: 1px solid var(--bg-border);
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+@media (min-width: 900px) {
+  .setup-card {
+    flex-direction: row;
+    min-height: 700px;
+  }
+}
+
+.setup-sidebar {
+  flex: 0 0 350px;
+  background: linear-gradient(135deg, #1A2332 0%, #0D141F 100%);
+  padding: 60px 40px;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  border-right: 1px solid var(--bg-border);
+}
+
+.setup-sidebar::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0; height: 4px;
+  background: linear-gradient(90deg, var(--primary-blue), var(--success));
+}
+
+.setup-sidebar h1 {
+  font-size: 36px;
+  font-weight: 800;
+  line-height: 1.2;
+  margin-bottom: 24px;
+  background: linear-gradient(to bottom right, #fff, #94A3B8);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.setup-sidebar p {
+  font-size: 16px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.setup-form-container {
+  flex: 1;
+  padding: 50px;
+  max-height: 85vh;
+  overflow-y: auto;
+}
+
+/* Custom scrollbar for form container */
+.setup-form-container::-webkit-scrollbar {
+  width: 6px;
+}
+.setup-form-container::-webkit-scrollbar-track {
+  background: transparent;
+}
+.setup-form-container::-webkit-scrollbar-thumb {
+  background: var(--bg-border);
+  border-radius: 10px;
+}
+
+.setup-section {
+  margin-bottom: 40px;
+}
+
+.setup-section h3 {
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: var(--primary-blue);
+  margin-bottom: 24px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.setup-section h3::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--bg-border);
+}
+
+.setup-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+
+.setup-full-width {
+  grid-column: span 2;
+}
+
+.setup-input-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.setup-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.setup-input {
+  padding: 14px 16px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1.5px solid var(--bg-border);
+  border-radius: 12px;
+  color: var(--text-primary);
+  font-size: 15px;
+  transition: all 0.2s;
+}
+
+.setup-input:focus {
+  outline: none;
+  border-color: var(--primary-blue);
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: 0 0 0 4px rgba(0, 168, 255, 0.1);
+}
+
+.setup-textarea {
+  resize: vertical;
+  min-height: 100px;
+}
+
+.setup-footer {
+  margin-top: 40px;
+  padding-top: 30px;
+  border-top: 1px solid var(--bg-border);
+  display: flex;
+  justify-content: flex-end;
+}
+
+@media (max-width: 900px) {
+  .setup-sidebar {
+    flex: 0 0 auto;
+    padding: 40px;
+    border-right: none;
+    border-bottom: 1px solid var(--bg-border);
+  }
+  
+  .setup-form-container {
+    padding: 30px;
+    max-height: none;
+  }
+  
+  .setup-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .setup-full-width {
+    grid-column: span 1;
+  }
+}
+
+.onboarding-steps {
+  margin-top: 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.step-item {
+  display: flex;
+  gap: 15px;
+  align-items: flex-start;
+}
+
+.step-number {
+  width: 28px;
+  height: 28px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--primary-blue);
+  flex-shrink: 0;
+}
+
+.step-item.active .step-number {
+  background: var(--primary-blue);
+  color: white;
+}
+
+.step-content {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.step-item.active .step-content {
+  color: var(--text-primary);
+  font-weight: 500;
+}

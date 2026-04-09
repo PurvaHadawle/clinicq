@@ -143,13 +143,16 @@ function App() {
     useEffect(() => {
         const savedUser = localStorage.getItem('clinicQ_user')
         const savedToken = localStorage.getItem('clinicQ_token')
-        
+
         if (savedUser && savedToken) {
             try {
                 const parsedUser = JSON.parse(savedUser)
                 setUser(parsedUser)
 
                 if (parsedUser.role === 'doctor') {
+                    // Re-fetch fresh data from server instead of relying only on potentially stale localStorage
+                    fetchDoctorInfo(parsedUser.email)
+                    
                     const savedClinics = localStorage.getItem('clinicQ_doctorClinics')
                     const savedClinicId = localStorage.getItem('clinicQ_currentClinicId')
                     if (savedClinics) {
@@ -160,9 +163,6 @@ function App() {
                         } else if (clinics.length > 0) {
                             setCurrentClinicId(clinics[0].id)
                         }
-                        setView(clinics.length > 0 ? 'doctor-dashboard' : 'doctor-setup')
-                    } else {
-                        setView('doctor-setup')
                     }
                 } else if (parsedUser.role === 'admin') {
                     setView('admin-dashboard')
@@ -170,14 +170,28 @@ function App() {
                     setView('dashboard')
                 }
             } catch (error) {
-                localStorage.removeItem('clinicQ_user');
-                localStorage.removeItem('clinicQ_token');
-                localStorage.removeItem('clinicQ_doctorClinics');
-                localStorage.removeItem('clinicQ_currentClinicId');
-                setUser(null);
+                console.error('Session restoration failed:', error)
             }
         }
     }, [])
+
+    const fetchDoctorInfo = async (email: string) => {
+        try {
+            const response = await fetch(`${API_URL}/doctor/me?email=${email}`)
+            const data = await response.json()
+            if (data.success) {
+                setDoctorClinics(data.clinics)
+                if (data.clinics.length > 0) {
+                    // Stay on dashboard if they have a clinic, even if not approved
+                    setView('doctor-dashboard')
+                } else {
+                    setView('doctor-setup')
+                }
+            }
+        } catch (error) {
+            console.error('Failed to refresh doctor info:', error)
+        }
+    }
 
     useEffect(() => {
         if (user) {
@@ -194,7 +208,20 @@ function App() {
         }
     }, [user, doctorClinics, currentClinicId])
 
-    // Clear form when switching views
+    // Polling for doctor clinic status updates when pending
+    useEffect(() => {
+        let interval: any;
+        if (user?.role === 'doctor' && view === 'doctor-dashboard') {
+            const currentClinic = doctorClinics.find(c => c.id === currentClinicId)
+            if (currentClinic?.verification_status === 'pending') {
+                interval = setInterval(() => {
+                    fetchDoctorInfo(user.email)
+                }, 5000) // Poll every 5 seconds while pending
+            }
+        }
+        return () => clearInterval(interval)
+    }, [user, view, doctorClinics, currentClinicId])
+
     useEffect(() => {
         if (view === 'login') {
             setPhone('')
@@ -276,7 +303,7 @@ function App() {
             if (user.role === 'doctor' && currentClinicId) {
                 socket.emit('join_clinic_queue', currentClinicId);
             }
-            
+
             const queueUpdateHandler = () => {
                 if (view === 'dashboard') {
                     fetchMyAppointments();
@@ -387,9 +414,9 @@ function App() {
                 if (data.token) {
                     localStorage.setItem('clinicQ_token', data.token)
                 }
-                alert('Registration successful! Logging you in...')
-                // Auto-login after registration
-                handleLogin(email, password)
+                localStorage.setItem('clinicQ_user', JSON.stringify(data.user))
+                setUser(data.user)
+                setView(data.user.role === 'doctor' ? 'doctor-setup' : 'dashboard')
             }
         } catch (error) {
             alert('Registration failed. Please try again.')
@@ -446,12 +473,12 @@ function App() {
                 <div className="nav-actions">
                     {user ? (
                         <>
-                           <button className="btn-primary" onClick={() => {
+                            <button className="btn-primary" onClick={() => {
                                 if (user.role === 'doctor') {
                                     setView(doctorClinics && doctorClinics.length > 0 ? 'doctor-dashboard' : 'doctor-setup')
                                 } else if (user.role === 'admin') setView('admin-dashboard')
                                 else setView('dashboard')
-                           }}>DASHBOARD</button>
+                            }}>DASHBOARD</button>
                         </>
                     ) : (
                         <>
@@ -963,7 +990,7 @@ function App() {
                                     <button
                                         className="btn-book"
                                         onClick={() => {
-                                        setBookingClinicId(clinic.id.toString())
+                                            setBookingClinicId(clinic.id.toString())
                                             setShowBookingModal(true)
                                         }}
                                         disabled={clinic.queue_status !== 'open'}
@@ -1026,7 +1053,7 @@ function App() {
         try {
             const response = await fetch(`${API_URL}/clinics`, {
                 method: 'POST',
-                headers: { 
+                headers: {
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${localStorage.getItem('clinicQ_token')}`
                 },
@@ -1047,7 +1074,7 @@ function App() {
             const data = await response.json()
             if (data.success) {
                 if (user.role === 'doctor') {
-                    alert('Clinic created and auto-approved! You can start practicing immediately.')
+                    alert('Registration submitted successfully! Please wait for admin approval to start your practice.')
                 } else {
                     alert('Clinic Added Successfully!')
                 }
@@ -1111,7 +1138,10 @@ function App() {
 
             const response = await fetch(`${API_URL}/clinics/${currentClinicId}`, {
                 method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${localStorage.getItem('clinicQ_token')}`
+                },
                 body: JSON.stringify(updatePayload)
             })
             const data = await response.json()
@@ -1238,122 +1268,173 @@ function App() {
     }
 
     const renderDoctorSetup = () => (
-        <div className="auth-container" style={{ maxWidth: '600px', margin: '40px auto', padding: '20px' }}>
-            <h2>👨‍⚕️ Complete Your Profile</h2>
-            <p className="subtitle">Set up your clinic details to start accepting appointments.</p>
+        <div className="setup-page-wrapper">
+            <div className="setup-card">
+                <div className="setup-sidebar">
+                    <h1>👨‍⚕️ Complete Your Profile</h1>
+                    <p>Set up your clinic details to start accepting appointments. Our platform helps you manage your queue efficiently and reach more patients in your locality.</p>
 
-            <div className="form-grid" style={{ display: 'grid', gap: '15px' }}>
-                <div className="input-group">
-                    <label>Specialization / Profession *</label>
-                    <input
-                        className="input"
-                        placeholder="e.g. Cardiologist, General Physician"
-                        value={doctorForm.specialization}
-                        onChange={e => setDoctorForm({ ...doctorForm, specialization: e.target.value })}
-                    />
-                </div>
-
-                <div className="input-group">
-                    <label>Clinic Name *</label>
-                    <input
-                        className="input"
-                        placeholder="e.g. HealthFirst Clinic"
-                        value={doctorForm.clinicName}
-                        onChange={e => setDoctorForm({ ...doctorForm, clinicName: e.target.value })}
-                    />
-                </div>
-
-                <div className="input-group">
-                    <label>Years of Experience</label>
-                    <input
-                        type="number"
-                        className="input"
-                        placeholder="e.g. 10"
-                        value={doctorForm.experience}
-                        onChange={e => setDoctorForm({ ...doctorForm, experience: e.target.value })}
-                    />
-                </div>
-
-                <div className="input-group">
-                    <label>Clinic Address *</label>
-                    <textarea
-                        className="input"
-                        rows={3}
-                        placeholder="Full address for navigation"
-                        value={doctorForm.address}
-                        onChange={e => setDoctorForm({ ...doctorForm, address: e.target.value })}
-                    />
-                </div>
-
-                <div className="input-group">
-                    <label>Locality</label>
-                    <select
-                        className="input"
-                        value={doctorForm.locality}
-                        onChange={e => setDoctorForm({ ...doctorForm, locality: e.target.value })}
-                    >
-                        <option value="Airoli">Airoli</option>
-                        <option value="Vashi">Vashi</option>
-                        <option value="Nerul">Nerul</option>
-                    </select>
-                </div>
-
-                <div className="input-row" style={{ display: 'flex', gap: '15px' }}>
-                    <div className="input-group" style={{ flex: 1 }}>
-                        <label>Min Wait Time (min) *</label>
-                        <input
-                            type="number"
-                            className="input"
-                            value={doctorForm.minWaitTime}
-                            onChange={e => setDoctorForm({ ...doctorForm, minWaitTime: e.target.value })}
-                        />
-                    </div>
-                    <div className="input-group" style={{ flex: 1 }}>
-                        <label>Consultation Time (min) *</label>
-                        <input
-                            type="number"
-                            className="input"
-                            value={doctorForm.consultationTime}
-                            onChange={e => setDoctorForm({ ...doctorForm, consultationTime: e.target.value })}
-                        />
+                    <div className="onboarding-steps">
+                        <div className="step-item active">
+                            <div className="step-number">1</div>
+                            <div className="step-content">
+                                <strong>Clinic Details</strong>
+                                <p>Basic info about your practice</p>
+                            </div>
+                        </div>
+                        <div className="step-item">
+                            <div className="step-number">2</div>
+                            <div className="step-content">
+                                <strong>Operations</strong>
+                                <p>Timings and wait estimates</p>
+                            </div>
+                        </div>
+                        <div className="step-item">
+                            <div className="step-number">3</div>
+                            <div className="step-content">
+                                <strong>Verification</strong>
+                                <p>Upload your medical license</p>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
-                <div className="input-row" style={{ display: 'flex', gap: '15px' }}>
-                    <div className="input-group" style={{ flex: 1 }}>
-                        <label>Opening Time *</label>
-                        <input
-                            type="time"
-                            className="input"
-                            value={doctorForm.openingTime}
-                            onChange={e => setDoctorForm({ ...doctorForm, openingTime: e.target.value })}
-                        />
+                <div className="setup-form-container">
+                    <div className="setup-section">
+                        <h3>🏥 Basic Information</h3>
+                        <div className="setup-grid">
+                            <div className="setup-input-group setup-full-width">
+                                <label className="setup-label">Clinic Name *</label>
+                                <input
+                                    className="setup-input"
+                                    placeholder="e.g. HealthFirst Clinic"
+                                    value={doctorForm.clinicName}
+                                    onChange={e => setDoctorForm({ ...doctorForm, clinicName: e.target.value })}
+                                />
+                            </div>
+                            <div className="setup-input-group">
+                                <label className="setup-label">Specialization / Profession *</label>
+                                <input
+                                    className="setup-input"
+                                    placeholder="e.g. Cardiologist"
+                                    value={doctorForm.specialization}
+                                    onChange={e => setDoctorForm({ ...doctorForm, specialization: e.target.value })}
+                                />
+                            </div>
+                            <div className="setup-input-group">
+                                <label className="setup-label">Years of Experience</label>
+                                <input
+                                    type="number"
+                                    className="setup-input"
+                                    placeholder="e.g. 10"
+                                    value={doctorForm.experience}
+                                    onChange={e => setDoctorForm({ ...doctorForm, experience: e.target.value })}
+                                />
+                            </div>
+                        </div>
                     </div>
-                    <div className="input-group" style={{ flex: 1 }}>
-                        <label>Closing Time *</label>
-                        <input
-                            type="time"
-                            className="input"
-                            value={doctorForm.closingTime}
-                            onChange={e => setDoctorForm({ ...doctorForm, closingTime: e.target.value })}
-                        />
+
+                    <div className="setup-section">
+                        <h3>📍 Location</h3>
+                        <div className="setup-grid">
+                            <div className="setup-input-group setup-full-width">
+                                <label className="setup-label">Clinic Address *</label>
+                                <textarea
+                                    className="setup-input setup-textarea"
+                                    rows={3}
+                                    placeholder="Full address for navigation"
+                                    value={doctorForm.address}
+                                    onChange={e => setDoctorForm({ ...doctorForm, address: e.target.value })}
+                                />
+                            </div>
+                            <div className="setup-input-group setup-full-width">
+                                <label className="setup-label">Locality</label>
+                                <select
+                                    className="setup-input"
+                                    value={doctorForm.locality}
+                                    onChange={e => setDoctorForm({ ...doctorForm, locality: e.target.value })}
+                                >
+                                    <option value="Airoli">Airoli</option>
+                                    <option value="Vashi">Vashi</option>
+                                    <option value="Nerul">Nerul</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="setup-section">
+                        <h3>🕒 Timing & Wait Time</h3>
+                        <div className="setup-grid">
+                            <div className="setup-input-group">
+                                <label className="setup-label">Opening Time *</label>
+                                <input
+                                    type="time"
+                                    className="setup-input"
+                                    value={doctorForm.openingTime}
+                                    onChange={e => setDoctorForm({ ...doctorForm, openingTime: e.target.value })}
+                                />
+                            </div>
+                            <div className="setup-input-group">
+                                <label className="setup-label">Closing Time *</label>
+                                <input
+                                    type="time"
+                                    className="setup-input"
+                                    value={doctorForm.closingTime}
+                                    onChange={e => setDoctorForm({ ...doctorForm, closingTime: e.target.value })}
+                                />
+                            </div>
+                            <div className="setup-input-group">
+                                <label className="setup-label">Min Wait Time (min) *</label>
+                                <input
+                                    type="number"
+                                    className="setup-input"
+                                    value={doctorForm.minWaitTime}
+                                    onChange={e => setDoctorForm({ ...doctorForm, minWaitTime: e.target.value })}
+                                />
+                            </div>
+                            <div className="setup-input-group">
+                                <label className="setup-label">Consultation Time (min) *</label>
+                                <input
+                                    type="number"
+                                    className="setup-input"
+                                    value={doctorForm.consultationTime}
+                                    onChange={e => setDoctorForm({ ...doctorForm, consultationTime: e.target.value })}
+                                />
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="setup-section">
+                        <h3>📄 Professional Verification</h3>
+                        <div className="setup-input-group setup-full-width">
+                            <label className="setup-label">Degree Certificate / Medical License *</label>
+                            <input
+                                type="file"
+                                className="setup-input"
+                                style={{ padding: '10px' }}
+                                accept=".pdf,.jpg,.png"
+                                onChange={(e) => setDoctorForm({ ...doctorForm, degreeFile: e.target.files ? e.target.files[0] : null })}
+                            />
+                            <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '8px' }}>
+                                This will be manually verified by our admins to ensure the authenticity of your practice.
+                            </p>
+                        </div>
+                    </div>
+
+                    <div className="setup-footer">
+                        <button
+                            className="btn-primary"
+                            style={{
+                                padding: '16px 40px',
+                                borderRadius: '12px',
+                                boxShadow: '0 10px 20px rgba(0, 168, 255, 0.2)'
+                            }}
+                            onClick={handleDoctorSetupSubmit}
+                        >
+                            Complete Registration & Start Practicing
+                        </button>
                     </div>
                 </div>
-
-                <div className="input-group">
-                    <label>Degree Certificate / Medical License *</label>
-                    <input
-                        type="file"
-                        className="input"
-                        accept=".pdf,.jpg,.png"
-                        onChange={(e) => setDoctorForm({ ...doctorForm, degreeFile: e.target.files ? e.target.files[0] : null })}
-                    />
-                    <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>This will be manually verified by our admins.</p>
-                </div>
-
-                <button className="btn-primary full-width" onClick={handleDoctorSetupSubmit} style={{ marginTop: '20px' }}>
-                    Create Clinic & Start Practicing
-                </button>
             </div>
         </div>
     )
@@ -1511,8 +1592,16 @@ function App() {
                     </div>
                 )}
                 {currentClinic?.verification_status === 'rejected' && (
-                    <div style={{ background: '#ef4444', color: '#fff', padding: '12px', textAlign: 'center', fontWeight: 'bold', fontSize: '14px' }}>
-                        ❌ Clinic Verification Rejected: Please contact admin or update your clinic details.
+                    <div style={{ background: '#ef4444', color: '#fff', padding: '20px', textAlign: 'center', borderRadius: '0 0 16px 16px', position: 'relative', zIndex: 10 }}>
+                        <div style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: '8px' }}>❌ Registration Rejected by Admin</div>
+                        <p style={{ marginBottom: '15px', opacity: 0.9 }}>Your clinic verification request was not approved. Please review your clinic details and medical license, then re-submit.</p>
+                        <button 
+                            className="btn-outline" 
+                            style={{ background: '#fff', color: '#ef4444', border: 'none', padding: '10px 24px', fontWeight: '700', borderRadius: '8px' }}
+                            onClick={() => setView('profile')}
+                        >
+                            ✏️ Edit & Re-apply for Verification
+                        </button>
                     </div>
                 )}
                 {currentClinic?.verification_status === 'approved' && (
@@ -1580,12 +1669,28 @@ function App() {
 
                     <div className="doctor-actions" style={{ marginBottom: '20px', display: 'flex', gap: '10px' }}>
                         <button className="btn-outline" onClick={() => fetchDoctorAppointments(user.id)}>🔄 Refresh List</button>
-                        <button className="btn-primary" onClick={() => {
-                            const newStatus = currentClinic?.queueStatus === 'open' ? 'closed' : 'open'
-                            handleUpdateClinicStatus(newStatus)
-                        }}>
-                            {currentClinic?.queueStatus === 'open' ? '🔴 Close Queue' : '🟢 Open Queue'}
-                        </button>
+                        {currentClinic?.verification_status === 'approved' ? (
+                            <button className="btn-primary" onClick={() => {
+                                const newStatus = currentClinic?.queueStatus === 'open' ? 'closed' : 'open'
+                                handleUpdateClinicStatus(newStatus)
+                            }}>
+                                {currentClinic?.queueStatus === 'open' ? '🔴 Close Queue' : '🟢 Open Queue'}
+                            </button>
+                        ) : (
+                            <div style={{ 
+                                padding: '10px 20px', 
+                                background: 'rgba(245, 158, 11, 0.1)', 
+                                border: '1px solid rgba(245, 158, 11, 0.3)', 
+                                color: '#f59e0b',
+                                borderRadius: '8px',
+                                fontSize: '14px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '8px'
+                            }}>
+                                🔒 Queue management locked until clinic is approved
+                            </div>
+                        )}
                     </div>
 
                     <div className="appointments-list">
@@ -1694,29 +1799,29 @@ function App() {
             alert('No clinic selected')
             return
         }
-        
+
         const token = localStorage.getItem('clinicQ_token');
         if (!token) {
             alert('Please login again to update queue status')
             setView('login')
             return
         }
-        
+
         try {
             console.log('Updating clinic status:', { id: currentClinicId, status, token: token ? 'present' : 'missing' })
-            
+
             const response = await fetch(`${API_URL}/clinics/${currentClinicId}`, {
                 method: 'PUT',
-                headers: { 
+                headers: {
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${token}`
                 },
                 body: JSON.stringify({ queueStatus: status })
             })
             const data = await response.json()
-            
+
             console.log('Update response:', data)
-            
+
             if (data.success) {
                 const updatedClinics = doctorClinics.map(c => c.id === currentClinicId ? data.data : c)
                 setDoctorClinics(updatedClinics)

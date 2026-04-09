@@ -3,7 +3,7 @@ const Appointment = require('../models/Appointment');
 
 const getTodayDate = () => {
     const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
 
 /**
@@ -67,7 +67,7 @@ const getDoctorClinics = async (req, res) => {
         if (!user || user.role !== 'doctor') {
             return res.status(404).json({ success: false, detail: 'Doctor not found' });
         }
-        
+
         const clinics = await Clinic.find({ doctorId: user._id });
         const mappedClinics = await Promise.all(clinics.map(buildClinicResponse));
 
@@ -88,12 +88,12 @@ const createClinic = async (req, res) => {
             ...req.body,
             doctorId: req.user._id,
             doctorName: req.user.name,
-            verificationStatus: 'approved' // Auto-approve for doctors (can change back to 'pending' if admin approval needed)
+            verificationStatus: 'pending' // Requires admin approval before appearing in search or allowing queue management
         });
         const savedClinic = await newClinic.save();
         const responseData = await buildClinicResponse(savedClinic);
         res.status(201).json({ success: true, data: responseData });
-    } catch(err) {
+    } catch (err) {
         res.status(500).json({ success: false, detail: err.message });
     }
 };
@@ -113,7 +113,7 @@ const updateClinic = async (req, res) => {
     try {
         const clinic = await Clinic.findById(req.params.id);
         if (!clinic) return res.status(404).json({ success: false, detail: 'Clinic not found' });
-        
+
         // Ensure user is the doctor of this clinic or admin
         if (clinic.doctorId.toString() !== req.user._id.toString() && req.user.role !== 'admin') {
             return res.status(403).json({ success: false, detail: 'Not authorized' });
@@ -125,14 +125,23 @@ const updateClinic = async (req, res) => {
             'experience', 'queueStatus'];
         allowedFields.forEach(key => {
             if (req.body[key] !== undefined) {
+                // Prevent opening queue if not approved
+                if (key === 'queueStatus' && req.body[key] === 'open' && clinic.verificationStatus !== 'approved') {
+                    throw new Error('Clinic must be approved by admin before opening queue');
+                }
                 clinic[key] = req.body[key];
             }
         });
-        
+
+        // Reset to pending if updated by doctor (requires re-verification)
+        if (req.user.role === 'doctor') {
+            clinic.verificationStatus = 'pending';
+        }
+
         const updatedClinic = await clinic.save();
         const responseData = await buildClinicResponse(updatedClinic);
         res.json({ success: true, data: responseData });
-    } catch(err) {
+    } catch (err) {
         res.status(500).json({ success: false, detail: err.message });
     }
 };
